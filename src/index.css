@@ -1,11 +1,52 @@
 @import "tailwindcss";
 
-* {
-  font-family: 'Poppins', sans-serif;
+@theme {
+  /* Warna Utama: Hitam */
+  --color-primary: #000000;
+  --color-primary-hover: #1a1a1a;
+
+  /* Warna Sekunder: Rose/Pink */
+  --color-secondary: #cd607e;
+  --color-secondary-hover: #b34d66;
+  --color-secondary-light: #fff0f5; /* Untuk background tipis */
+
+  /* Font */
+  --font-sans: "Poppins", sans-serif;
 }
 
+/* Global Styles */
 body {
-  font-family: 'Poppins', sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #f8fafc; /* Slate-50 equivalent */
+  color: var(--color-primary);
+}
+
+@layer utilities {
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden; /* Penting untuk Safari/Chrome */
+  }
+
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+}
+
+/* Scrollbar sembunyi tapi tetap bisa scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
