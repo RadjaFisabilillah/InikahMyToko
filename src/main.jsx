@@ -1,7 +1,7 @@
-import { StrictMode, useState, useEffect } from "react";
+import { StrictMode, useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabaseClient";
-import { Plus, X, SearchX, Droplets } from "lucide-react";
+import { Plus, X, SearchX, Store, Loader2 } from "lucide-react";
 import "./index.css";
 
 // Components
@@ -9,71 +9,242 @@ import DesktopNavbar from "./components/navbar/DesktopNavbar";
 import MobileNavbar from "./components/navbar/MobileNavbar";
 import AuthPage from "./components/auth/AuthPage";
 import PerfumeGrid from "./components/perfume/PerfumeGrid";
+import ProfilePage from "./pages/ProfilePage";
 import PWABadge from "./PWABadge";
 
 function App() {
   const [session, setSession] = useState(null);
   const [currentPage, setCurrentPage] = useState("home");
   const [items, setItems] = useState([]);
-  const [selectedItem, setSelectedItem] = useState(null);
+  const [stores, setStores] = useState([]);
+  const [selectedStore, setSelectedStore] = useState(null);
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-
-  // State Search
   const [searchQuery, setSearchQuery] = useState("");
+  const [loadingAction, setLoadingAction] = useState(false); // State loading untuk aksi simpan
 
-  // State Add Item
+  // State untuk Form Tambah
   const [newItem, setNewItem] = useState({
     name: "",
     brand: "",
-    price: 0,
-    stock: 0,
+    price: "",
+    stock: "",
     category: "Pria",
     description: "",
     image_url: "",
+    store_id: "",
   });
+
+  // State untuk Autocomplete
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionRef = useRef(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchData();
+      if (session) {
+        fetchStores();
+        fetchData();
+      }
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) fetchData();
+      if (session) {
+        fetchStores();
+        fetchData();
+      }
     });
 
-    return () => subscription.unsubscribe();
+    // Event listener untuk menutup dropdown suggestion saat klik di luar
+    const handleClickOutside = (event) => {
+      if (
+        suggestionRef.current &&
+        !suggestionRef.current.contains(event.target)
+      ) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, []);
+
+  const fetchStores = async () => {
+    const { data } = await supabase
+      .from("stores")
+      .select("*")
+      .order("created_at");
+    if (data) {
+      setStores(data);
+      if (data.length > 0)
+        setNewItem((prev) => ({ ...prev, store_id: data[0].id }));
+    }
+  };
 
   const fetchData = async () => {
     const { data, error } = await supabase
       .from("perfumes")
-      .select("*")
+      .select(
+        `
+            *,
+            inventory (
+                id,
+                store_id,
+                stock
+            )
+        `
+      )
       .order("created_at", { ascending: false });
+
     if (!error) setItems(data);
   };
 
+  // --- LOGIKA AUTOCOMPLETE ---
+  const handleNameInput = async (e) => {
+    const value = e.target.value;
+    setNewItem((prev) => ({ ...prev, name: value }));
+
+    if (value.length > 1) {
+      const { data } = await supabase
+        .from("perfumes")
+        .select("*")
+        .ilike("name", `%${value}%`)
+        .limit(5);
+
+      if (data && data.length > 0) {
+        setSuggestions(data);
+        setShowSuggestions(true);
+      } else {
+        setSuggestions([]);
+        setShowSuggestions(false);
+      }
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectSuggestion = (perfume) => {
+    setNewItem((prev) => ({
+      ...prev,
+      name: perfume.name,
+      brand: perfume.brand,
+      price: perfume.price, // Harga ikut terisi
+      category: perfume.category,
+      description: perfume.description || "",
+      image_url: perfume.image_url || "",
+    }));
+    setShowSuggestions(false);
+  };
+  // ---------------------------
+
   const handleAddItem = async (e) => {
     e.preventDefault();
-    const { error } = await supabase
-      .from("perfumes")
-      .insert([{ ...newItem, user_id: session.user.id }]);
-    if (error) alert(error.message);
-    else {
+    if (!newItem.store_id) {
+      alert("Mohon pilih toko terlebih dahulu.");
+      return;
+    }
+
+    setLoadingAction(true);
+
+    try {
+      // 1. Cek apakah parfum dengan nama ini SUDAH ADA (Case Insensitive)
+      const { data: existingPerfumes, error: searchError } = await supabase
+        .from("perfumes")
+        .select("id")
+        .ilike("name", newItem.name)
+        .maybeSingle();
+
+      if (searchError) throw searchError;
+
+      let perfumeId;
+
+      if (existingPerfumes) {
+        // --- PARFUM SUDAH ADA: Pakai ID lama ---
+        perfumeId = existingPerfumes.id;
+
+        // Opsional: Anda bisa menambahkan logic update detail parfum di sini jika diinginkan
+        // misal update harga terbaru:
+        /* await supabase.from('perfumes').update({ price: newItem.price }).eq('id', perfumeId); */
+      } else {
+        // --- PARFUM BARU: Insert ke tabel perfumes ---
+        const { data: newPerfume, error: createError } = await supabase
+          .from("perfumes")
+          .insert([
+            {
+              name: newItem.name,
+              brand: newItem.brand,
+              price: newItem.price,
+              category: newItem.category,
+              description: newItem.description,
+              image_url: newItem.image_url,
+              user_id: session.user.id,
+            },
+          ])
+          .select()
+          .single();
+
+        if (createError) throw createError;
+        perfumeId = newPerfume.id;
+      }
+
+      // 2. Cek Inventory untuk Toko Terpilih
+      const { data: existingInventory, error: invSearchError } = await supabase
+        .from("inventory")
+        .select("id, stock")
+        .eq("perfume_id", perfumeId)
+        .eq("store_id", newItem.store_id)
+        .maybeSingle();
+
+      if (invSearchError) throw invSearchError;
+
+      if (existingInventory) {
+        // --- SUDAH ADA STOK DI TOKO INI: Tambahkan (Accumulate) ---
+        const newStock = existingInventory.stock + parseInt(newItem.stock);
+
+        const { error: updateError } = await supabase
+          .from("inventory")
+          .update({ stock: newStock })
+          .eq("id", existingInventory.id);
+
+        if (updateError) throw updateError;
+        alert(`Stok berhasil ditambahkan! Total sekarang: ${newStock} ml`);
+      } else {
+        // --- BELUM ADA DI TOKO INI: Buat Inventory Baru ---
+        const { error: insertError } = await supabase.from("inventory").insert([
+          {
+            perfume_id: perfumeId,
+            store_id: newItem.store_id,
+            stock: parseInt(newItem.stock),
+          },
+        ]);
+
+        if (insertError) throw insertError;
+        alert("Produk baru berhasil ditambahkan ke toko!");
+      }
+
+      // Reset Form & Refresh Data
       setIsAddModalOpen(false);
-      setNewItem({
+      setNewItem((prev) => ({
+        ...prev,
         name: "",
         brand: "",
-        price: 0,
-        stock: 0,
-        category: "Pria",
+        price: "",
+        stock: "",
         description: "",
         image_url: "",
-      });
+      }));
       fetchData();
+    } catch (error) {
+      alert("Terjadi kesalahan: " + error.message);
+    } finally {
+      setLoadingAction(false);
     }
   };
 
@@ -97,9 +268,8 @@ function App() {
       );
     }
 
-    // LOGIKA FILTER
     const filteredItems = items.filter((item) => {
-      const matchesCategory =
+      const matchesCategoryPage =
         currentPage === "home"
           ? true
           : currentPage === "pria"
@@ -112,12 +282,11 @@ function App() {
         item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.brand.toLowerCase().includes(searchQuery.toLowerCase());
 
-      return matchesCategory && matchesSearch;
+      return matchesCategoryPage && matchesSearch;
     });
 
     if (currentPage === "profile") {
       return (
-        // PERBAIKAN 1: Tambah padding top profil jadi pt-40
         <div className="p-4 max-w-lg mx-auto pt-40 pb-32">
           <div className="bg-white rounded-3xl shadow-xl shadow-gray-200/50 p-8 text-center border border-gray-100">
             <div className="w-24 h-24 bg-primary text-white rounded-full mx-auto flex items-center justify-center mb-6 text-3xl font-bold shadow-lg shadow-primary/30">
@@ -139,11 +308,9 @@ function App() {
     }
 
     return (
-      // PERBAIKAN 2: Ubah pt-32 menjadi pt-40 (160px) untuk jarak yang jauh lebih aman
       <div className="p-4 md:p-8 max-w-7xl mx-auto pb-32 pt-40">
         {!searchQuery && (
-          // PERBAIKAN 3: Tambah mt-4 untuk dorongan ekstra pada judul
-          <div className="mb-10 mt-10 text-center md:text-left animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="mb-10 mt-4 text-center md:text-left animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h1 className="text-4xl font-bold text-primary mb-2 tracking-tight">
               {currentPage === "home"
                 ? "Dashboard"
@@ -152,15 +319,22 @@ function App() {
                   }`}
             </h1>
             <p className="text-gray-500">
-              {currentPage === "home"
-                ? `Total ${items.length} varian parfum tersedia.`
-                : `Menampilkan ${filteredItems.length} item.`}
+              {selectedStore
+                ? `Menampilkan stok untuk: ${
+                    stores.find((s) => s.id === selectedStore)?.name
+                  }`
+                : "Menampilkan katalog global (Semua Toko)."}
             </p>
           </div>
         )}
 
         {filteredItems.length > 0 ? (
-          <PerfumeGrid items={filteredItems} onUpdate={fetchData} />
+          <PerfumeGrid
+            items={filteredItems}
+            selectedStoreId={selectedStore}
+            stores={stores}
+            onUpdate={fetchData}
+          />
         ) : (
           <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in zoom-in duration-300 bg-white/50 rounded-3xl border border-dashed border-gray-300 mt-10">
             <div className="bg-gray-100 p-5 rounded-full mb-4">
@@ -170,7 +344,7 @@ function App() {
               Data Tidak Ditemukan
             </h3>
             <p className="text-gray-500 font-medium text-sm">
-              Parfum habis atau belum ditambahkan.
+              Belum ada parfum ditambahkan.
             </p>
           </div>
         )}
@@ -192,17 +366,20 @@ function App() {
         onNavigate={setCurrentPage}
         searchValue={searchQuery}
         onSearchChange={setSearchQuery}
+        stores={stores}
+        selectedStore={selectedStore}
+        onSelectStore={setSelectedStore}
       />
 
       <main>{renderContent()}</main>
 
       <MobileNavbar currentPage={currentPage} onNavigate={setCurrentPage} />
-
       <PWABadge />
 
+      {/* MODAL TAMBAH STOK */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl w-full max-w-md p-8 relative shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-md p-8 relative shadow-2xl scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
             <button
               onClick={() => setIsAddModalOpen(false)}
               className="absolute top-6 right-6 text-gray-400 hover:text-primary transition-colors"
@@ -212,94 +389,159 @@ function App() {
             <h2 className="text-2xl font-bold text-primary mb-6">
               Tambah Stok
             </h2>
-            <form onSubmit={handleAddItem} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                  Nama Parfum
-                </label>
-                <input
-                  required
-                  className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
-                  onChange={(e) =>
-                    setNewItem({ ...newItem, name: e.target.value })
-                  }
-                />
+
+            {stores.length === 0 ? (
+              <div className="text-center py-10">
+                <Store className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-600 mb-4">Anda belum memiliki toko.</p>
+                <button
+                  onClick={() => {
+                    setIsAddModalOpen(false);
+                    setCurrentPage("profile");
+                  }}
+                  className="text-secondary font-bold hover:underline"
+                >
+                  Buat Toko di Profil
+                </button>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                  Brand
-                </label>
-                <input
-                  required
-                  className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
-                  onChange={(e) =>
-                    setNewItem({ ...newItem, brand: e.target.value })
-                  }
-                />
-              </div>
-              <div className="flex gap-4">
-                <div className="w-1/2">
+            ) : (
+              <form onSubmit={handleAddItem} className="space-y-4">
+                <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                    Harga
+                    Pilih Toko
+                  </label>
+                  <select
+                    required
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
+                    onChange={(e) =>
+                      setNewItem({ ...newItem, store_id: e.target.value })
+                    }
+                    value={newItem.store_id}
+                  >
+                    {stores.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* INPUT NAMA DENGAN AUTOCOMPLETE */}
+                <div className="relative" ref={suggestionRef}>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Nama Parfum
                   </label>
                   <input
                     required
-                    type="number"
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium placeholder:text-gray-300"
+                    value={newItem.name}
+                    onChange={handleNameInput}
+                    onFocus={() => newItem.name && setShowSuggestions(true)}
+                    placeholder="Ketik untuk mencari..."
+                  />
+
+                  {/* DROPDOWN SUGGESTIONS */}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-100 rounded-xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar animate-in fade-in zoom-in-95 duration-100">
+                      {suggestions.map((sug) => (
+                        <div
+                          key={sug.id}
+                          onClick={() => selectSuggestion(sug)}
+                          className="p-3 hover:bg-pink-50 cursor-pointer border-b border-gray-50 last:border-0 transition-colors group"
+                        >
+                          <p className="text-sm font-bold text-gray-800 group-hover:text-primary">
+                            {sug.name}
+                          </p>
+                          <p className="text-xs text-gray-400">{sug.brand}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Brand
+                  </label>
+                  <input
+                    required
                     className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
+                    value={newItem.brand}
                     onChange={(e) =>
-                      setNewItem({ ...newItem, price: e.target.value })
+                      setNewItem({ ...newItem, brand: e.target.value })
                     }
                   />
                 </div>
-                <div className="w-1/2">
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                    Volume (ml)
-                  </label>
-                  <div className="relative">
+                <div className="flex gap-4">
+                  <div className="w-1/2">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                      Harga
+                    </label>
                     <input
                       required
                       type="number"
-                      className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium pl-9"
+                      className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
+                      value={newItem.price}
+                      onChange={(e) =>
+                        setNewItem({ ...newItem, price: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="w-1/2">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                      Volume (ml)
+                    </label>
+                    <input
+                      required
+                      type="number"
+                      className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
+                      value={newItem.stock}
                       onChange={(e) =>
                         setNewItem({ ...newItem, stock: e.target.value })
                       }
                     />
-                    <Droplets className="absolute left-3 top-3.5 text-gray-400 w-4 h-4" />
                   </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                  Kategori
-                </label>
-                <select
-                  className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
-                  onChange={(e) =>
-                    setNewItem({ ...newItem, category: e.target.value })
-                  }
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Kategori
+                  </label>
+                  <select
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all font-medium"
+                    value={newItem.category}
+                    onChange={(e) =>
+                      setNewItem({ ...newItem, category: e.target.value })
+                    }
+                  >
+                    <option value="Pria">Pria</option>
+                    <option value="Wanita">Wanita</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    URL Gambar
+                  </label>
+                  <input
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all text-sm text-gray-500"
+                    value={newItem.image_url}
+                    onChange={(e) =>
+                      setNewItem({ ...newItem, image_url: e.target.value })
+                    }
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loadingAction}
+                  className="w-full bg-primary text-white py-4 rounded-xl font-bold tracking-wide hover:bg-gray-900 transition-all mt-4 shadow-lg shadow-primary/20 flex justify-center items-center"
                 >
-                  <option value="Pria">Pria</option>
-                  <option value="Wanita">Wanita</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                  URL Gambar
-                </label>
-                <input
-                  className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all text-sm text-gray-500"
-                  onChange={(e) =>
-                    setNewItem({ ...newItem, image_url: e.target.value })
-                  }
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full bg-primary text-white py-4 rounded-xl font-bold tracking-wide hover:bg-gray-900 transition-all mt-4 shadow-lg shadow-primary/20"
-              >
-                SIMPAN DATA
-              </button>
-            </form>
+                  {loadingAction ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    "SIMPAN DATA"
+                  )}
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}
