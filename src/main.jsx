@@ -1,7 +1,7 @@
 import { StrictMode, useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabaseClient";
-import { Plus, X, SearchX, Store, Loader2, Droplets } from "lucide-react";
+import { Plus, X, SearchX, Store, Loader2 } from "lucide-react";
 import "./index.css";
 
 // Components
@@ -17,6 +17,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState("home");
   const [items, setItems] = useState([]);
 
+  // STATE TOKO & SEARCH
   const [stores, setStores] = useState([]);
   const [selectedStore, setSelectedStore] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -24,6 +25,7 @@ function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
 
+  // State untuk Form Tambah
   const [newItem, setNewItem] = useState({
     name: "",
     brand: "",
@@ -35,6 +37,7 @@ function App() {
     store_id: "",
   });
 
+  // State Autocomplete
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionRef = useRef(null);
@@ -58,6 +61,7 @@ function App() {
       }
     });
 
+    // Event listener untuk menutup dropdown suggestion saat klik di luar
     const handleClickOutside = (event) => {
       if (
         suggestionRef.current &&
@@ -74,6 +78,7 @@ function App() {
     };
   }, []);
 
+  // 1. FETCH TOKO
   const fetchStores = async () => {
     const { data } = await supabase
       .from("stores")
@@ -81,11 +86,13 @@ function App() {
       .order("created_at");
     if (data) {
       setStores(data);
+      // Otomatis set toko pertama untuk form tambah jika ada
       if (data.length > 0)
         setNewItem((prev) => ({ ...prev, store_id: data[0].id }));
     }
   };
 
+  // 2. FETCH DATA (WAJIB ADA INVENTORY UNTUK FLIP CARD)
   const fetchData = async () => {
     const { data, error } = await supabase
       .from("perfumes")
@@ -104,6 +111,7 @@ function App() {
     if (!error) setItems(data);
   };
 
+  // LOGIKA AUTOCOMPLETE
   const handleNameInput = async (e) => {
     const value = e.target.value;
     setNewItem((prev) => ({ ...prev, name: value }));
@@ -132,7 +140,7 @@ function App() {
       ...prev,
       name: perfume.name,
       brand: perfume.brand,
-      price: perfume.price,
+      price: perfume.price, // Harga ikut terisi
       category: perfume.category,
       description: perfume.description || "",
       image_url: perfume.image_url || "",
@@ -140,6 +148,7 @@ function App() {
     setShowSuggestions(false);
   };
 
+  // LOGIKA TAMBAH ITEM (SMART MERGE)
   const handleAddItem = async (e) => {
     e.preventDefault();
     if (!newItem.store_id) {
@@ -149,6 +158,7 @@ function App() {
     setLoadingAction(true);
 
     try {
+      // Cek apakah parfum sudah ada (Case Insensitive)
       const { data: existingPerfumes } = await supabase
         .from("perfumes")
         .select("id")
@@ -158,8 +168,10 @@ function App() {
       let perfumeId;
 
       if (existingPerfumes) {
+        // Parfum sudah ada, gunakan ID-nya
         perfumeId = existingPerfumes.id;
       } else {
+        // Insert Parfum Baru
         const { data: newPerfume, error: createError } = await supabase
           .from("perfumes")
           .insert([
@@ -180,6 +192,7 @@ function App() {
         perfumeId = newPerfume.id;
       }
 
+      // Cek Inventory di Toko Terpilih
       const { data: existingInventory } = await supabase
         .from("inventory")
         .select("id, stock")
@@ -188,6 +201,7 @@ function App() {
         .maybeSingle();
 
       if (existingInventory) {
+        // Update Stok (Akumulasi)
         const newStock = existingInventory.stock + parseInt(newItem.stock);
         const { error: updateError } = await supabase
           .from("inventory")
@@ -196,6 +210,7 @@ function App() {
         if (updateError) throw updateError;
         alert(`Stok diperbarui! Total: ${newStock} ml`);
       } else {
+        // Insert Stok Baru
         const { error: insertError } = await supabase.from("inventory").insert([
           {
             perfume_id: perfumeId,
@@ -238,7 +253,7 @@ function App() {
     }
 
     const filteredItems = items.filter((item) => {
-      // LOGIKA FILTER BARU (UNISEX MUNCUL DI SEMUA)
+      // LOGIKA FILTER KATEGORI (TERMASUK UNISEX)
       const matchesCategoryPage =
         currentPage === "home"
           ? true
@@ -246,6 +261,8 @@ function App() {
           ? item.category === "Pria" || item.category === "Unisex"
           : currentPage === "wanita"
           ? item.category === "Wanita" || item.category === "Unisex"
+          : currentPage === "unisex"
+          ? item.category === "Unisex"
           : false;
 
       const matchesSearch =
@@ -256,6 +273,7 @@ function App() {
     });
 
     return (
+      // LAYOUT FIX: pt-48 agar judul aman tidak tertutup navbar
       <div className="p-4 md:p-20 max-w-7xl mx-auto pb-32 pt-28">
         {!searchQuery && (
           <div className="mb-10 mt-4 text-center md:text-left animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -374,6 +392,7 @@ function App() {
                   </select>
                 </div>
 
+                {/* NAMA + AUTOCOMPLETE */}
                 <div className="relative" ref={suggestionRef}>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
                     Nama Parfum
@@ -461,7 +480,7 @@ function App() {
                   >
                     <option value="Pria">Pria</option>
                     <option value="Wanita">Wanita</option>
-                    <option value="Unisex">Unisex</option> {/* OPSI BARU */}
+                    <option value="Unisex">Unisex</option>
                   </select>
                 </div>
                 <div>
