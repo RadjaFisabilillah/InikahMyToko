@@ -1,7 +1,7 @@
 import { StrictMode, useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./lib/supabaseClient";
-import { Plus, X, SearchX, Store, Loader2 } from "lucide-react";
+import { Plus, X, SearchX, Store, Loader2, Droplets } from "lucide-react";
 import "./index.css";
 
 // Components
@@ -16,14 +16,14 @@ function App() {
   const [session, setSession] = useState(null);
   const [currentPage, setCurrentPage] = useState("home");
   const [items, setItems] = useState([]);
+
   const [stores, setStores] = useState([]);
   const [selectedStore, setSelectedStore] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loadingAction, setLoadingAction] = useState(false); // State loading untuk aksi simpan
+  const [loadingAction, setLoadingAction] = useState(false);
 
-  // State untuk Form Tambah
   const [newItem, setNewItem] = useState({
     name: "",
     brand: "",
@@ -35,7 +35,6 @@ function App() {
     store_id: "",
   });
 
-  // State untuk Autocomplete
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionRef = useRef(null);
@@ -59,7 +58,6 @@ function App() {
       }
     });
 
-    // Event listener untuk menutup dropdown suggestion saat klik di luar
     const handleClickOutside = (event) => {
       if (
         suggestionRef.current &&
@@ -106,7 +104,6 @@ function App() {
     if (!error) setItems(data);
   };
 
-  // --- LOGIKA AUTOCOMPLETE ---
   const handleNameInput = async (e) => {
     const value = e.target.value;
     setNewItem((prev) => ({ ...prev, name: value }));
@@ -135,14 +132,13 @@ function App() {
       ...prev,
       name: perfume.name,
       brand: perfume.brand,
-      price: perfume.price, // Harga ikut terisi
+      price: perfume.price,
       category: perfume.category,
       description: perfume.description || "",
       image_url: perfume.image_url || "",
     }));
     setShowSuggestions(false);
   };
-  // ---------------------------
 
   const handleAddItem = async (e) => {
     e.preventDefault();
@@ -150,30 +146,20 @@ function App() {
       alert("Mohon pilih toko terlebih dahulu.");
       return;
     }
-
     setLoadingAction(true);
 
     try {
-      // 1. Cek apakah parfum dengan nama ini SUDAH ADA (Case Insensitive)
-      const { data: existingPerfumes, error: searchError } = await supabase
+      const { data: existingPerfumes } = await supabase
         .from("perfumes")
         .select("id")
         .ilike("name", newItem.name)
         .maybeSingle();
 
-      if (searchError) throw searchError;
-
       let perfumeId;
 
       if (existingPerfumes) {
-        // --- PARFUM SUDAH ADA: Pakai ID lama ---
         perfumeId = existingPerfumes.id;
-
-        // Opsional: Anda bisa menambahkan logic update detail parfum di sini jika diinginkan
-        // misal update harga terbaru:
-        /* await supabase.from('perfumes').update({ price: newItem.price }).eq('id', perfumeId); */
       } else {
-        // --- PARFUM BARU: Insert ke tabel perfumes ---
         const { data: newPerfume, error: createError } = await supabase
           .from("perfumes")
           .insert([
@@ -194,29 +180,22 @@ function App() {
         perfumeId = newPerfume.id;
       }
 
-      // 2. Cek Inventory untuk Toko Terpilih
-      const { data: existingInventory, error: invSearchError } = await supabase
+      const { data: existingInventory } = await supabase
         .from("inventory")
         .select("id, stock")
         .eq("perfume_id", perfumeId)
         .eq("store_id", newItem.store_id)
         .maybeSingle();
 
-      if (invSearchError) throw invSearchError;
-
       if (existingInventory) {
-        // --- SUDAH ADA STOK DI TOKO INI: Tambahkan (Accumulate) ---
         const newStock = existingInventory.stock + parseInt(newItem.stock);
-
         const { error: updateError } = await supabase
           .from("inventory")
           .update({ stock: newStock })
           .eq("id", existingInventory.id);
-
         if (updateError) throw updateError;
-        alert(`Stok berhasil ditambahkan! Total sekarang: ${newStock} ml`);
+        alert(`Stok diperbarui! Total: ${newStock} ml`);
       } else {
-        // --- BELUM ADA DI TOKO INI: Buat Inventory Baru ---
         const { error: insertError } = await supabase.from("inventory").insert([
           {
             perfume_id: perfumeId,
@@ -224,12 +203,10 @@ function App() {
             stock: parseInt(newItem.stock),
           },
         ]);
-
         if (insertError) throw insertError;
-        alert("Produk baru berhasil ditambahkan ke toko!");
+        alert("Produk berhasil ditambahkan!");
       }
 
-      // Reset Form & Refresh Data
       setIsAddModalOpen(false);
       setNewItem((prev) => ({
         ...prev,
@@ -237,12 +214,10 @@ function App() {
         brand: "",
         price: "",
         stock: "",
-        description: "",
-        image_url: "",
       }));
       fetchData();
     } catch (error) {
-      alert("Terjadi kesalahan: " + error.message);
+      alert("Error: " + error.message);
     } finally {
       setLoadingAction(false);
     }
@@ -258,24 +233,19 @@ function App() {
   }
 
   const renderContent = () => {
-    if (selectedItem) {
-      return (
-        <DetailPage
-          item={selectedItem}
-          onBack={() => setSelectedItem(null)}
-          onUpdate={fetchData}
-        />
-      );
+    if (currentPage === "profile") {
+      return <ProfilePage session={session} onLogout={handleLogout} />;
     }
 
     const filteredItems = items.filter((item) => {
+      // LOGIKA FILTER BARU (UNISEX MUNCUL DI SEMUA)
       const matchesCategoryPage =
         currentPage === "home"
           ? true
           : currentPage === "pria"
-          ? item.category === "Pria"
+          ? item.category === "Pria" || item.category === "Unisex"
           : currentPage === "wanita"
-          ? item.category === "Wanita"
+          ? item.category === "Wanita" || item.category === "Unisex"
           : false;
 
       const matchesSearch =
@@ -285,30 +255,8 @@ function App() {
       return matchesCategoryPage && matchesSearch;
     });
 
-    if (currentPage === "profile") {
-      return (
-        <div className="p-4 max-w-lg mx-auto pt-40 pb-32">
-          <div className="bg-white rounded-3xl shadow-xl shadow-gray-200/50 p-8 text-center border border-gray-100">
-            <div className="w-24 h-24 bg-primary text-white rounded-full mx-auto flex items-center justify-center mb-6 text-3xl font-bold shadow-lg shadow-primary/30">
-              {session.user.email[0].toUpperCase()}
-            </div>
-            <h2 className="text-2xl font-bold text-primary mb-1">Pengguna</h2>
-            <p className="text-gray-500 mb-8 font-medium">
-              {session.user.email}
-            </p>
-            <button
-              onClick={handleLogout}
-              className="w-full bg-white border-2 border-red-100 text-red-500 py-3.5 rounded-xl font-bold hover:bg-red-50 hover:border-red-200 transition-colors"
-            >
-              KELUAR APLIKASI
-            </button>
-          </div>
-        </div>
-      );
-    }
-
     return (
-      <div className="p-4 md:p-8 max-w-7xl mx-auto pb-32 pt-40">
+      <div className="p-4 md:p-20 max-w-7xl mx-auto pb-32 pt-28">
         {!searchQuery && (
           <div className="mb-10 mt-4 text-center md:text-left animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h1 className="text-4xl font-bold text-primary mb-2 tracking-tight">
@@ -426,7 +374,6 @@ function App() {
                   </select>
                 </div>
 
-                {/* INPUT NAMA DENGAN AUTOCOMPLETE */}
                 <div className="relative" ref={suggestionRef}>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
                     Nama Parfum
@@ -440,7 +387,6 @@ function App() {
                     placeholder="Ketik untuk mencari..."
                   />
 
-                  {/* DROPDOWN SUGGESTIONS */}
                   {showSuggestions && suggestions.length > 0 && (
                     <div className="absolute z-10 w-full mt-1 bg-white border border-gray-100 rounded-xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar animate-in fade-in zoom-in-95 duration-100">
                       {suggestions.map((sug) => (
@@ -515,6 +461,7 @@ function App() {
                   >
                     <option value="Pria">Pria</option>
                     <option value="Wanita">Wanita</option>
+                    <option value="Unisex">Unisex</option> {/* OPSI BARU */}
                   </select>
                 </div>
                 <div>
@@ -526,6 +473,19 @@ function App() {
                     value={newItem.image_url}
                     onChange={(e) =>
                       setNewItem({ ...newItem, image_url: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Deskripsi
+                  </label>
+                  <textarea
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:bg-white focus:border-secondary focus:ring-0 transition-all text-sm"
+                    rows="2"
+                    value={newItem.description}
+                    onChange={(e) =>
+                      setNewItem({ ...newItem, description: e.target.value })
                     }
                   />
                 </div>

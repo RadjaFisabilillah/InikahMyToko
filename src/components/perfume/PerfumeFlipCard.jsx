@@ -17,12 +17,10 @@ export default function PerfumeFlipCard({
   onUpdate,
   onDelete,
 }) {
-  // Default stores = []
   const [isFlipped, setIsFlipped] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({ ...item });
 
-  // Safety check: Pastikan item.inventory ada sebelum di-find
   const currentInventory = item.inventory?.find(
     (inv) => inv.store_id === selectedStoreId
   );
@@ -110,6 +108,13 @@ export default function PerfumeFlipCard({
     setIsFlipped(true);
   };
 
+  // Helper untuk warna badge
+  const getCategoryColor = (cat) => {
+    if (cat === "Pria") return "bg-primary";
+    if (cat === "Wanita") return "bg-secondary";
+    return "bg-purple-600"; // Warna UNISEX
+  };
+
   return (
     <>
       <div
@@ -146,9 +151,9 @@ export default function PerfumeFlipCard({
               />
               <div className="absolute top-2 left-2">
                 <span
-                  className={`text-[10px] uppercase font-bold tracking-widest px-2 py-1 rounded-md text-white shadow-sm ${
-                    item.category === "Pria" ? "bg-primary" : "bg-secondary"
-                  }`}
+                  className={`text-[10px] uppercase font-bold tracking-widest px-2 py-1 rounded-md text-white shadow-sm ${getCategoryColor(
+                    item.category
+                  )}`}
                 >
                   {item.category}
                 </span>
@@ -230,7 +235,6 @@ export default function PerfumeFlipCard({
                     <Store size={14} /> Ketersediaan Per Toko
                   </h4>
                   <div className="space-y-2">
-                    {/* Safety Check: pastikan stores ada dan inventory ada */}
                     {stores?.length > 0 ? (
                       stores.map((store) => {
                         const inv = item.inventory?.find(
@@ -344,6 +348,38 @@ export default function PerfumeFlipCard({
                         />
                       </div>
                     </div>
+
+                    {/* PILIHAN KATEGORI BARU (TERMASUK UNISEX) */}
+                    <div>
+                      <label className={labelClass}>Kategori</label>
+                      <div className="flex gap-2 p-1 bg-gray-50 rounded-xl border border-transparent">
+                        {["Pria", "Wanita", "Unisex"].map((cat) => (
+                          <label
+                            key={cat}
+                            className={`flex-1 py-2.5 text-center text-sm font-bold rounded-lg cursor-pointer transition-all ${
+                              formData.category === cat
+                                ? cat === "Unisex"
+                                  ? "bg-purple-600 text-white shadow-md"
+                                  : cat === "Pria"
+                                  ? "bg-primary text-white shadow-md"
+                                  : "bg-secondary text-white shadow-md"
+                                : "text-gray-400 hover:text-gray-600"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="category"
+                              value={cat}
+                              checked={formData.category === cat}
+                              onChange={handleChange}
+                              className="hidden"
+                            />
+                            {cat}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
                     <div>
                       <label className={labelClass}>URL Gambar</label>
                       <input
